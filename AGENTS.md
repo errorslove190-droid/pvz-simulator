@@ -93,6 +93,8 @@ node tools/codemap.mjs   # обновить карту кода после за�
 ## Состояние и планы
 
 - Журнал изменений: [docs/changelog.md](docs/changelog.md).
-- Обзоры и найденные проблемы: [docs/review/](docs/review/) — начинай со сводки `00-summary.md`
-  (появится после обзора агентами).
+- Обзор от 27.09.2026 и найденные проблемы: [docs/review/](docs/review/) — начинай со сводки
+  [`00-summary.md`](docs/review/00-summary.md): десять проблем по приоритету, формула
+  залипательности, план. Проверенные исправления ошибок — `docs/review/01-bugs-fixes.diff`
+  (`git apply -p0 …`), симулятор экономики — `node docs/review/economy-sim.mjs`.
 - Бэкапы других версий: [backups/README.md](backups/README.md).
