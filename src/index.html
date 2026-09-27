@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Симулятор Сотрудника ПВЗ</title>
+  <!-- Yandex Games SDK (требование 1.1). На платформе доступен как /sdk.js.
+       При локальном запуске файл отсутствует — игра корректно работает без него. -->
+  <script async src="/sdk.js"></script>
+  <link rel="icon" href="data:,"><!-- без запроса favicon (чистая консоль) -->
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="rotate-hint" aria-hidden="true"><div><span class="rotate-icon">📱</span>Поверните телефон вертикально —<br>игра рассчитана на портретный режим</div></div>
+
+<div id="loading-screen" role="status" aria-live="polite">
+  <div class="loading-logo">📦</div>
+  <div class="loading-title">Симулятор Сотрудника ПВЗ</div>
+  <div class="loading-sub">Загружаем пункт выдачи…</div>
+  <div class="loading-progress-track"><div class="loading-progress-fill"></div></div>
+  <div class="loading-hint">Складываем заказы и готовим смену. Одну минуту.</div>
+</div>
+
+<div id="game-container">
+<div id="bg-layer"></div>
+<div id="bg-layer-acc"></div>
+<div id="bg-layer-wh"></div>
+  <header id="game-hud">
+    <div class="stat-pill"><div class="stat-label">📅 День</div><div class="stat-val" id="hud-day">1</div></div>
+    <div class="stat-pill"><div class="stat-label">💳 Баланс</div><div class="stat-val gold" id="hud-money">150 ₽</div></div>
+    <div class="stat-pill"><div class="stat-label">⭐ Рейтинг</div><div class="stat-val rating" id="hud-rating">3.50</div></div>
+    <div class="stat-pill"><div class="stat-label">📦 Склад</div><div class="stat-val stock" id="hud-stock">0 / 3</div></div>
+    <button class="hud-icon-btn" id="btn-sound-toggle" onclick="toggleSound()" title="Звук вкл/выкл" aria-label="Звук">🔊</button>
+    <button class="hud-icon-btn" id="btn-help" onclick="openContextGuide()" title="Как играть" aria-label="Подсказка">❓</button>
+  </header>
+
+  <main>
+    <!-- ЭКРАН 1: ПРИЁМКА (сортировка по 3 корзинам) -->
+    <section id="screen-morning" class="screen-card active">
+      <div class="acceptance-topbar">
+        <div class="acc-top-pill timer" id="hud-timer">⏱️ 30с</div>
+        <div class="acc-top-pill progress" id="invoice-progress-pill">📋 Накладная: <span id="invoice-progress" style="margin-left: 4px;">0 / 0</span></div>
+        <div class="acc-top-pill" id="hud-acc-stats" style="font-size: 11.5px; gap: 6px;">
+          <span style="color: var(--success); font-weight: 700;" id="hud-correct">✓ 0</span>
+          <span style="color: var(--danger); font-weight: 700;" id="hud-wrong">✗ 0</span>
+        </div>
+
+      </div>
+
+      <div class="acceptance-stage" id="acceptance-stage">
+        <!-- Накладная (компактная горизонтальная лента) -->
+        <div class="invoice-panel">
+          <div class="invoice-list" id="invoice-list"></div>
+        </div>
+
+        <!-- Зона сортировки: текущая коробка -->
+        <div class="sort-zone" id="sort-zone"></div>
+
+        <!-- Большая красная кнопка завершения приёмки над кнопками сортировки -->
+        <button class="end-acceptance-btn" id="btn-end-acceptance" onclick="endAcceptanceNow()">
+          ⏹ Завершить приёмку
+        </button>
+
+        <!-- 3 корзины сортировки -->
+        <div class="sort-bins">
+          <button class="sort-bin bin-ours" id="bin-ours" onclick="onSort('ours')">
+            <span class="sort-bin-count" id="bin-ours-count">0 шт</span>
+            <div class="sort-bin-icon">✅</div>
+            <div class="sort-bin-title">СВОИ</div>
+            <div class="sort-bin-hint">По накладной</div>
+          </button>
+
+          <button class="sort-bin bin-others" id="bin-others" onclick="onSort('others')">
+            <span class="sort-bin-count" id="bin-others-count">0 шт</span>
+            <div class="sort-bin-icon">📦</div>
+            <div class="sort-bin-title">ЧУЖИЕ</div>
+            <div class="sort-bin-hint">Не наш пункт</div>
+          </button>
+
+          <button class="sort-bin bin-broken" id="bin-broken" onclick="onSort('broken')">
+            <span class="sort-bin-count" id="bin-broken-count">0 шт</span>
+            <div class="sort-bin-icon">💥</div>
+            <div class="sort-bin-title">БРАК</div>
+            <div class="sort-bin-hint">Повреждена</div>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ЭКРАН 2: СЦЕНА ПОСЕТИТЕЛЯ (Дневник сотрудника) -->
+    <section id="screen-scene" class="screen-card">
+      <div class="scene-layout">
+        <div class="scene-top">
+          <span class="scene-visitor-chip">👤 <span id="scene-name">Посетитель</span></span>
+          <span class="scene-order-line">Заказ <strong id="scene-order-code">#0000</strong></span>
+        </div>
+        <!-- СЮДА вшиваются 21 моделька посетителей (прозрачный PNG) -->
+        <div class="scene-stage">
+          <div class="scene-model-placeholder" id="scene-model">🛍️</div>
+        </div>
+        <!-- Текст сцены: сюда пишется нарратив «Дневника» -->
+        <div class="scene-narration">
+          <div id="scene-text">«Здравствуйте!»</div>
+          <span class="scene-more" id="scene-more">▼</span>
+        </div>
+        <!-- СЮДА рендерятся варианты действий сцены (выборы игрока) -->
+        <div class="scene-choices" id="scene-choices"></div>
+      </div>
+    </section>
+
+    <!-- ЭКРАН 3: СКЛАД -->
+    <section id="screen-warehouse" class="screen-card">
+      <div class="wh-shelves" id="warehouse-grid-shelves"></div>
+      <div class="wh-bottom">
+        <div class="wh-locator">Ищем заказ<strong id="target-search-box-code">#0000</strong></div>
+        <div class="wh-hint" id="warehouse-hint-feedback">Тапни по коробке и отсканируй её ШК</div>
+      </div>
+    </section>
+
+    <!-- ЭКРАН 4: РЕЗУЛЬТАТ -->
+    <section id="screen-result" class="screen-card">
+      <div class="result-screen-layout">
+        <!-- Верхняя карточка с цитатой и метриками -->
+        <div class="result-top-card">
+          <div class="result-badge-pill" id="result-badge">✨ Заказ выдан</div>
+
+          <div class="result-speech-card">
+            <div class="result-speech-author" id="result-author-name">Посетитель</div>
+            <div class="result-speech-text" id="result-visitor-speech">«Спасибо!»</div>
+          </div>
+
+          <div class="result-stats-row">
+            <div class="result-stat-box money">
+              <span class="stat-label">Доход</span>
+              <strong class="stat-val" id="result-money-earned">+0 ₽</strong>
+            </div>
+            <div class="result-stat-box rating">
+              <span class="stat-label">Рейтинг</span>
+              <strong class="stat-val" id="result-rating-earned">⭐ +0.00</strong>
+            </div>
+          </div>
+
+          <div class="result-tags-row" id="result-tags-row"></div>
+        </div>
+
+        <!-- Нижняя кнопка в самом низу экрана -->
+        <div class="result-bottom-actions">
+          <button class="action-btn" id="btn-next-customer" onclick="continueCustomerFlow()" style="width: 100%; padding: 15px 20px; font-size: 15.5px; font-weight: 800; box-shadow: 0 6px 20px rgba(245, 165, 36, 0.45);">
+            ➡️ Следующий посетитель
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ЭКРАН 5: КОНЕЦ СМЕНЫ (ФИНАНСОВЫЙ ОТЧЁТ) -->
+    <section id="screen-dayend" class="screen-card">
+      <div class="dayend-screen-layout">
+        <!-- Верхняя карточка финансового отчёта -->
+        <div class="dayend-top-card">
+          <div class="card-title-badge">🌙 Итоги смены</div>
+          <h2 id="dayend-title" style="margin: 4px 0 0 0; font-size: 20px;">День 1 завершён</h2>
+          <div class="subtitle" id="dayend-subtitle" style="margin: 2px 0 10px 0;">ПВЗ закрыт на ночь. Финансовый отчёт:</div>
+
+          <div class="financial-report-card" style="margin-bottom: 0;">
+            <div class="fin-row">
+              <span class="fin-label">📈 Доход за смену (приёмка + выдача):</span>
+              <strong class="fin-val pos" id="dayend-gross">+0 ₽</strong>
+            </div>
+            <div class="expense-banner" id="dayend-expense-banner">
+              <div class="expense-banner-head">
+                <span class="expense-banner-icon" id="dayend-expense-icon">🏢</span>
+                <div class="expense-banner-title">
+                  <span class="expense-banner-name" id="dayend-expense-name">Оплата ЖКХ</span>
+                  <span class="expense-banner-sub" id="dayend-expense-sub">Аренда и коммунальные платежи за день</span>
+                </div>
+                <strong class="expense-banner-total neg" id="dayend-expenses">-0 ₽</strong>
+              </div>
+              <div class="expense-banner-breakdown">
+                <div class="expense-break-row">
+                  <span class="expense-break-label">🏠 Аренда</span>
+                  <strong class="expense-break-val neg" id="dayend-expense-rent">-0 ₽</strong>
+                </div>
+                <div class="expense-break-row">
+                  <span class="expense-break-label">💡 Коммуналка</span>
+                  <strong class="expense-break-val neg" id="dayend-expense-util">-0 ₽</strong>
+                </div>
+              </div>
+            </div>
+            <div class="fin-row" id="dayend-courier-row" style="display:none;">
+              <span class="fin-label">🚚 Курьер возвратов и издержки:</span>
+              <strong class="fin-val" id="dayend-courier">0 ₽</strong>
+            </div>
+            <div class="fin-divider"></div>
+            <div class="fin-row fin-total">
+              <span class="fin-label"><b>💰 Чистая прибыль за день:</b></span>
+              <strong class="fin-val" id="dayend-net">+0 ₽</strong>
+            </div>
+            <div class="fin-divider"></div>
+            <div class="fin-row">
+              <span class="fin-label">🛒 Покупки в магазине:</span>
+              <strong class="fin-val" id="dayend-purchases">0 ₽</strong>
+            </div>
+            <div class="fin-row">
+              <span class="fin-label">💳 Баланс после смены:</span>
+              <strong class="fin-val" id="dayend-money">0 ₽</strong>
+            </div>
+            <div class="fin-row">
+              <span class="fin-label">⭐ Рейтинг:</span>
+              <strong class="fin-val" id="dayend-rating">3.50</strong>
+            </div>
+          </div>
+          <div id="dayend-goal28" style="display:none; margin-top: 10px; padding: 10px 14px; border-radius: 12px; border: 1.5px solid var(--accent); font-size: 13px; line-height: 1.45; background: rgba(245, 158, 11, 0.08);"></div>
+        </div>
+
+        <!-- Нижние кнопки в самом низу экрана -->
+        <div class="dayend-bottom-actions">
+          <button class="action-btn" onclick="openShopScreen()" style="width: 100%; padding: 14px 18px; font-size: 15px; font-weight: 800; box-shadow: 0 6px 20px rgba(245, 165, 36, 0.45);">
+            🛒 Перейти в магазин улучшений
+          </button>
+          <button class="btn-ghost dayend-next-btn" onclick="YG.startNewDay()" style="width: 100%; padding: 12px 18px; font-size: 13.5px; font-weight: 700;">
+            ☀️ Начать день <span id="dayend-nextday">2</span> (без покупок)
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ЭКРАН 6: МАГАЗИН УЛУЧШЕНИЙ ПВЗ -->
+    <section id="screen-shop" class="screen-card">
+      <div class="shop-screen-layout">
+        <!-- Верхняя чистая навигация по категориям (без дублирования баланса и лишних рамок) -->
+        <div class="shop-nav-bar">
+          <button class="shop-tab-pill active" data-tab="expansion" onclick="switchShopTab('expansion')">
+            <span class="tab-icon">📚</span>
+            <span class="tab-title">Стеллажи</span>
+          </button>
+          <button class="shop-tab-pill" data-tab="equipment" onclick="switchShopTab('equipment')">
+            <span class="tab-icon">🔍</span>
+            <span class="tab-title">Техника</span>
+          </button>
+          <button class="shop-tab-pill" data-tab="daily" onclick="switchShopTab('daily')">
+            <span class="tab-icon">☕</span>
+            <span class="tab-title">Расходники</span>
+          </button>
+        </div>
+
+        <!-- Скроллируемый список товаров -->
+        <div class="shop-cards-scroll-container">
+          <div class="shop-grid" id="shop-grid"></div>
+        </div>
+
+        <!-- Нижние кнопки перехода в самом низу экрана -->
+        <div class="shop-bottom-actions">
+          <button class="action-btn" onclick="YG.startNewDay()" style="width: 100%; padding: 14px 18px; font-size: 15px; font-weight: 800; box-shadow: 0 6px 20px rgba(245, 165, 36, 0.45);">
+            ☀️ Начать рабочий день <span id="shop-nextday-num">2</span>
+          </button>
+          <button class="btn-ghost" onclick="showDayEnd({ keepDaily: true })" style="width: 100%; padding: 11px 18px; font-size: 13.5px; font-weight: 700;">
+            ↩️ Назад к отчёту дня
+          </button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Сканер ШК: зажми и держи -->
+  <div class="scan-overlay" id="scan-overlay">
+    <div class="scan-card">
+      <h3>🗂️ Коробка <span id="scan-code">#0000</span></h3>
+      <p class="scan-sub">Зажми штрихкод и держи, пока не считается</p>
+      <div class="scan-bc-wrap" id="scan-bc-wrap"
+           onpointerdown="scanStart()" onpointerup="scanStop()" onpointerleave="scanStop()" onpointercancel="scanStop()"
+           onmousedown="scanStart()" onmouseup="scanStop()" onmouseleave="scanStop()"
+           ontouchstart="scanStart()" ontouchend="scanStop()" ontouchcancel="scanStop()">
+        <div id="scan-bc"></div>
+        <div class="scan-laser"></div>
+      </div>
+      <div class="scan-progress"><div class="scan-progress-fill" id="scan-progress"></div></div>
+      <div class="scan-hint" id="scan-hint">👆 Зажми и удерживай</div>
+      <button class="scan-cancel" onclick="closeScan()">Отмена</button>
+    </div>
+  </div>
+
+  <!-- Обучение по сортировке — всплывающее окно -->
+  <!-- Обучение по процессам — данные приходят из GUIDE_DEFS (см. showGuide) -->
+  <div class="tutorial-overlay" id="tutorial-overlay">
+    <div class="tutorial-card">
+      <h3 id="tutorial-title">Как играть?</h3>
+      <p class="tut-sub" id="tutorial-sub">Обучение</p>
+      <div class="tut-rows" id="tutorial-rows"></div>
+      <div class="tut-footer" id="tutorial-footer"></div>
+      <button class="tut-btn" id="tutorial-btn" style="margin-top: 12px;">Понятно ▶</button>
+    </div>
+  </div>
+
+</div>
+
+<div class="toast-msg" id="toast">Уведомление</div>
+
+<script src="yg.js"></script>
+<script src="game.js"></script>
+</body>
+</html>
