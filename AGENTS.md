@@ -92,6 +92,7 @@ node tools/codemap.mjs   # обновить карту кода после за�
 
 ## Состояние и планы
 
+- План до релиза простым языком (для владельца игры): [docs/release-plan.md](docs/release-plan.md).
 - Журнал изменений: [docs/changelog.md](docs/changelog.md).
 - Обзор от 27.09.2026 и найденные проблемы: [docs/review/](docs/review/) — начинай со сводки
   [`00-summary.md`](docs/review/00-summary.md): десять проблем по приоритету, формула
