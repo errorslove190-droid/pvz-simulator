@@ -1,0 +1,25 @@
+// Вернувшийся игрок (обучение пройдено) открывает игру сразу в альбомной с сейвом посреди дня.
+import { chromium } from 'playwright';
+import { PROFILES, initScript, playAcceptance, state, save } from './lib.mjs';
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const browser = await chromium.launch();
+const ctx = await browser.newContext({ ...PROFILES.phone, viewport: { width: 844, height: 390 } });
+await ctx.addInitScript(initScript);
+const prep = await ctx.newPage();
+await prep.setViewportSize({ width: 390, height: 844 });
+await prep.goto('http://localhost:8802/?adMs=300');
+await prep.waitForFunction(() => window.__ygMock && __ygMock.events.some((e) => e.name === 'LoadingAPI.ready'));
+await sleep(500);
+await playAcceptance(prep, { input: 'eval' });
+await prep.evaluate(() => { gameState.guidesSeen.issue = true; YG.save({ phase: 'customers' }); });
+await prep.close();
+const p = await ctx.newPage();
+await p.goto('http://localhost:8802/?adMs=300');
+await sleep(1200);
+const s1 = await state(p);
+await sleep(5000);
+const s2 = await state(p);
+const res = { after1_2s: { screen: s1.screen, hidden: s1.hidden, lines: s1.sceneLines, idx: s1.sceneIdx, q: s1.sceneQueueLen }, after6_2s: { screen: s2.screen, hidden: s2.hidden, lines: s2.sceneLines, idx: s2.sceneIdx, q: s2.sceneQueueLen, choices: await p.evaluate(() => document.querySelectorAll('.scene-choice').length) }, hint: await p.evaluate(() => getComputedStyle(document.getElementById('rotate-hint')).display) };
+save('landscape-return.json', res);
+console.log(JSON.stringify(res));
+await browser.close();

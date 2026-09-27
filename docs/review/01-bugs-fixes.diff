@@ -1,0 +1,298 @@
+--- src/game.js	2026-09-27 21:32:27.411919735 +0000
++++ src/game.js	2026-09-27 22:16:45.218777452 +0000
+@@ -348,7 +348,12 @@
+   if (mn) mn.scrollTop = 0;
+   // Всплывающее обучение не должно оставаться на других экранах
+   const tov = document.getElementById('tutorial-overlay');
+-  if (tov && id !== 'screen-morning') tov.classList.remove('show');
++  if (tov && tov.classList.contains('show')) {
++    // экран сменился — подсказка прежнего шага и его пауза больше не нужны
++    tov.classList.remove('show');
++    _guidePause = null; _guideOnClose = null;
++    setGuideInert(false);
++  }
+   // Полноэкранные арт-фоны: приёмка и выдача заказов
+   document.body.classList.toggle('phase-scene', id === 'screen-scene' || id === 'screen-result' || id === 'screen-dayend' || id === 'screen-shop');
+   document.body.classList.toggle('phase-acceptance', id === 'screen-morning');
+@@ -757,16 +762,25 @@
+   if (!buildGuide(id)) return;
+   const btn = document.getElementById('tutorial-btn');
+   btn.textContent = opts.autoStart ? 'Понятно, начнём! ▶' : 'Понятно ▶';
+-  _guideOnClose = opts.onClose || null;
+-  _guidePause = captureGuidePause();
+-  btn.onclick = () => closeGuide();
+   const ov = document.getElementById('tutorial-overlay');
++  const already = !!(ov && ov.classList.contains('show'));
++  if (!already) { _guideOnClose = opts.onClose || null; _guidePause = captureGuidePause(); }
++  else if (opts.onClose) _guideOnClose = opts.onClose;
++  btn.onclick = () => closeGuide();
+   if (ov) ov.classList.add('show');
++  setGuideInert(true);
++  try { btn.focus({ preventScroll: true }); } catch (e) {} // Enter/Пробел закрывают подсказку
++}
++// Под модальной подсказкой кнопки недоступны и для клавиатуры (Tab)
++function setGuideInert(on) {
++  ['game-hud'].forEach(id => { const el = document.getElementById(id); if (el) el.inert = on; });
++  const mn = document.querySelector('main'); if (mn) mn.inert = on;
+ }
+ 
+ function closeGuide() {
+   const ov = document.getElementById('tutorial-overlay');
+   if (ov) ov.classList.remove('show');
++  setGuideInert(false);
+   resumeGuidePause(_guidePause);
+   _guidePause = null;
+   const cb = _guideOnClose;
+@@ -820,11 +834,20 @@
+     kind = Math.random() < 0.6 ? 'others' : 'broken';
+   }
+ 
++  // «Свои», которые некуда поставить, не подаём: склад полон, а вытеснить можно только
++  // мёртвый груз и только ради долга. Иначе коробка крутится по кругу (−25 ₽ за каждый «возврат»).
++  const _occ = (gameState.shelfParcels || []).length + acceptance.acceptedList.length;
++  const _room = _occ < gameState.warehouseCapacity;
++  const _dead = (gameState.shelfParcels || []).concat(acceptance.acceptedList).some(p => p.status === 'surplus' || p.status === 'broken');
++  const _placeable = acceptance.invoice.filter(i => !i.sorted && (_room || (i.isDebt && _dead)));
++  if (kind === 'ours' && _placeable.length === 0) kind = (hasOthers ? (Math.random() < 0.6 ? 'others' : 'broken') : 'ours');
++  if (kind === 'ours' && _placeable.length === 0) { finishAcceptance('full'); return; }
++
+   let parcel, expected, isBroken = false;
+   if (kind === 'ours') {
+     // Если есть неотсортированные долги — подаем их в первую очередь
+-    const unsortedDebts = acceptance.invoice.filter(i => i.isDebt && !i.sorted);
+-    const unsorted = acceptance.invoice.filter(i => !i.sorted);
++    const unsortedDebts = _placeable.filter(i => i.isDebt);
++    const unsorted = _placeable;
+     parcel = (unsortedDebts.length > 0 && Math.random() < 0.75)
+       ? unsortedDebts[Math.floor(Math.random() * unsortedDebts.length)]
+       : unsorted[Math.floor(Math.random() * unsorted.length)];
+@@ -1030,13 +1053,22 @@
+     } else {
+       showToast(isDebtBox
+         ? '⚠️ Склад забит живыми заказами — долг пока некуда поставить'
+-        : '⚠️ Склад заполнен! Эту коробку принять нельзя — отсортируйте как чужую или завершите приёмку.');
++        : '⚠️ Склад заполнен! Эту коробку некуда поставить — «Чужие» вернёт её отправителю без штрафа.');
+       try { audio.bad(); } catch (e) {}
+       return; // не завершаем всю приёмку и не сжигаем коробку
+     }
+   }
+ 
+   const cur = acceptance.current;
++  // Коробка накладной, которой нет места: «Чужие»/«Брак» — вернуть отправителю, без штрафа
++  if (cur.expected === 'ours' && bin !== 'ours' && currentOccupiedBefore >= gameState.warehouseCapacity) {
++    cur.sorted = true;
++    if (cur.parcel && !cur.parcel.sorted) { cur.parcel.sorted = true; cur.parcel.returned = true; }
++    const box0 = document.getElementById('sort-box'); if (box0) box0.classList.add('fly-out');
++    if (acceptance._nextBoxTimeout) clearTimeout(acceptance._nextBoxTimeout);
++    acceptance._nextBoxTimeout = setTimeout(() => { if (acceptance && acceptance.running) buildNextBox(); }, 480);
++    return;
++  }
+   const correct = (bin === cur.expected);
+ 
+   // Звук и анимация
+@@ -1177,8 +1209,10 @@
+   const trolleyBonusPerBox = (gameState.upg && gameState.upg.trolley) ? gameState.upg.trolley * 5 : 0;
+   const trolleyTotal = (s.oursCorrect || 0) * trolleyBonusPerBox;
+   const net = s.bonus - s.penalty + trolleyTotal;
+-  gameState.dayGrossIncome = (gameState.dayGrossIncome || 0) + net; // E-5: отрицательный итог тоже в отчёте
++  const _moneyBefore = gameState.money;
+   gameState.money = Math.max(0, gameState.money + net);
++  // E-5: отрицательный итог тоже в отчёте, но не больше, чем реально ушло с баланса
++  gameState.dayGrossIncome = (gameState.dayGrossIncome || 0) + (gameState.money - _moneyBefore);
+   // На склад едут все принятые коробки: долги гарантированно попадают на склад,
+   // остальные коробки — насколько хватает свободных мест на полках.
+   const incoming = acceptance.acceptedList || [];
+@@ -3999,6 +4033,14 @@
+   }, 320);
+ }
+ 
++// Блокировка вариантов после выбора. Одного класса .disabled мало: он гасит только
++// указатель, а Enter/Пробел по кнопке, оставшейся в фокусе после клика, запускают
++// обработчик ещё раз (двойной штраф скандала, двойная оплата курьера и т.п.).
++function lockChoices() {
++  document.querySelectorAll('#scene-choices button').forEach(b => { b.classList.add('disabled'); b.disabled = true; });
++  const a = document.activeElement; if (a && a.blur) a.blur();
++}
++
+ function addSceneContinue(label, fn) {
+   swapChoices(cont => {
+     const btn = document.createElement('button');
+@@ -4064,7 +4106,7 @@
+ function onRefuseFollowup(v, ch) {
+   audio.tap();
+   gameState.lastChoice = { act: 'refuse', sub: ch.act };
+-  document.querySelectorAll('.scene-choice').forEach(b => b.classList.add('disabled'));
++  lockChoices();
+ 
+   // Единый стиль: нажатие плашки = реплика сотрудника (v.refuseFollow[act]),
+   // затем ответ клиента (v.hardEnds / v.giveEnds), мысль, итог.
+@@ -4171,7 +4213,7 @@
+   audio.tap();
+   gameState.lastChoice = { act: ch.act };
+   // Плашки не исчезают резко (иначе панель прыгает) — гаснут и ждут конца текста
+-  document.querySelectorAll('.scene-choice').forEach(b => b.classList.add('disabled'));
++  lockChoices();
+ 
+   const layout = document.querySelector('.scene-layout');
+ 
+@@ -4244,7 +4286,7 @@
+ function onDebtChoice(v, ch) {
+   audio.tap();
+   gameState.lastChoice = { act: ch.act };
+-  document.querySelectorAll('.scene-choice').forEach(b => b.classList.add('disabled'));
++  lockChoices();
+   const layout = document.querySelector('.scene-layout');
+ 
+   // FIX E-8: если обещанной посылки на складе нет — не врать «всё принёс»,
+@@ -4471,7 +4513,7 @@
+ 
+ function onScandalChoice(v, type, ch) {
+   audio.tap();
+-  document.querySelectorAll('.scene-choice').forEach(b => b.classList.add('disabled'));
++  lockChoices();
+ 
+   let deltaRating = ch.deltaRating || 0;
+   let deltaMoney = ch.deltaMoney || 0;
+@@ -4611,7 +4653,7 @@
+ 
+ function onBomzhChoice(v, ev, ch) {
+   audio.tap();
+-  document.querySelectorAll('.scene-choice').forEach(b => b.classList.add('disabled'));
++  lockChoices();
+ 
+   let deltaRating = ch.deltaRating || 0;
+   const stealChance = ch.stealChance || 0.5;
+@@ -4949,6 +4991,7 @@
+   }
+ }
+ 
++let _deadloadHintTimer = null;
+ function onDeadloadClick(p) {
+   try { audio.bad(); } catch(e) {}
+   const typeName = (p.status === 'broken') ? 'брак' : 'излишек';
+@@ -4979,7 +5022,8 @@
+       });
+     };
+     fb.appendChild(adBtn);
+-    setTimeout(() => {
++    clearTimeout(_deadloadHintTimer);
++    _deadloadHintTimer = setTimeout(() => {
+       if (document.body.classList.contains('phase-warehouse')) {
+         const cust = gameState.activeVisitor;
+         if (!cust) return;
+@@ -5014,6 +5058,7 @@
+ function showWarehouse() {
+   const cust = gameState.activeVisitor;
+   if (!cust) return;
++  clearTimeout(_deadloadHintTimer);
+   document.getElementById('target-search-box-code').textContent = '#' + cust.orderCode;
+   updateWarehouseBackground();
+   showScreen('screen-warehouse'); // экран должен быть виден до замера позиций
+@@ -5214,7 +5259,7 @@
+ function onLostChoice(v, ch) {
+   audio.tap();
+   gameState.lastChoice = { act: 'lost', sub: ch.act };
+-  document.querySelectorAll('.scene-choice').forEach(b => b.classList.add('disabled'));
++  lockChoices();
+ 
+   // Если игрок пообещал найти к завтра — сохраняем долг на следующее утро
+   if (ch.act === 'sorry') {
+@@ -5246,7 +5291,7 @@
+ // (рейтинг как у «извиниться и пообещать»), 'wrath' — −0.50⭐ и долг сгорает.
+ function onDebtFailChoice(v, act) {
+   audio.tap();
+-  document.querySelectorAll('.scene-choice').forEach(b => b.classList.add('disabled'));
++  lockChoices();
+   YG.save();
+ 
+   if (act === 'promise') {
+@@ -5311,6 +5356,7 @@
+   document.getElementById('scan-bc-wrap').className = 'scan-bc-wrap';
+   document.getElementById('scan-progress').style.width = '0%';
+   document.getElementById('scan-hint').textContent = '👆 Зажми штрихкод и удерживай';
++  const _cancel = document.querySelector('#scan-overlay .scan-cancel'); if (_cancel) _cancel.disabled = false;
+   scanState = { code, isTarget, progress: 0, timer: null, done: false };
+   document.getElementById('scan-overlay').classList.add('show');
+ }
+@@ -5350,12 +5396,14 @@
+     hint.textContent = '✅ Заказ #' + scanState.code + ' отсканирован!';
+     audio.good();
+     deliverParcel(scanState.code); // выданный заказ исчезает со склада
++    const _cancel = document.querySelector('#scan-overlay .scan-cancel'); if (_cancel) _cancel.disabled = true; // заказ уже выдан
+     setTimeout(() => { closeScan(); showResult(); }, 900);
+   } else {
+     wrap.classList.add('done-bad');
+     hint.textContent = '❌ Не тот заказ! Это #' + scanState.code;
+     audio.bad();
+-    setTimeout(closeScan, 1200);
++    const s = scanState;
++    setTimeout(() => { if (scanState === s) closeScan(); }, 1200); // игрок мог уже открыть другую коробку
+   }
+ }
+ 
+@@ -5608,7 +5656,7 @@
+     return;
+   }
+   audio.tap();
+-  document.querySelectorAll('.scene-choice').forEach(b => b.classList.add('disabled'));
++  lockChoices();
+ 
+   // Списываем плату (учитываем в отчёте смены — E-5)
+   gameState.money = Math.max(0, gameState.money - fee);
+@@ -5640,7 +5688,7 @@
+ 
+ function onCourierChat(count, fee, partsDesc, costPerItem) {
+   audio.tap();
+-  document.querySelectorAll('.scene-choice').forEach(b => b.classList.add('disabled'));
++  lockChoices();
+ 
+   const hasMoney = gameState.money >= fee;
+   const replyText = hasMoney
+@@ -5677,7 +5725,7 @@
+ 
+ function onCourierRefuse() {
+   audio.tap();
+-  document.querySelectorAll('.scene-choice').forEach(b => b.classList.add('disabled'));
++  lockChoices();
+ 
+   queueSceneLines([
+     { who: 'you', t: '«Сегодня ничего отдавать не буду, пусть пока полежит.»' },
+@@ -5697,7 +5745,7 @@
+     b.innerHTML = '<div class="scene-choice-icon">👍</div><div><b>«Спасибо, стараемся держать склад в чистоте!»</b><span>Проводить курьера</span></div>';
+     b.onclick = () => {
+       audio.tap();
+-      document.querySelectorAll('.scene-choice').forEach(el => el.classList.add('disabled'));
++      lockChoices();
+       queueSceneLines([
+         { who: 'you', t: '«Спасибо! Стараемся работать аккуратно и без ошибок.»' },
+         { who: 'v', t: '«Так держать! Поехал я дальше по маршруту. Хорошего вечера!»' },
+@@ -5718,9 +5766,11 @@
+   const gross = gameState.dayGrossIncome || 0;
+   const exp = getDailyExpenses(currentDayFinished);
+ 
++  let _firstReport = false;
+   if ((gameState._lastExpenseDay || 0) < currentDayFinished) {
+     gameState.money = Math.max(0, gameState.money - exp.total);
+     gameState._lastExpenseDay = currentDayFinished;
++    _firstReport = true;
+   }
+   const courierFee = gameState.dayCourierFee || 0;
+   const otherCost = gameState.dayOtherCost || 0;
+@@ -5736,7 +5786,7 @@
+   document.getElementById('dayend-subtitle').textContent = 'ПВЗ закрыт на ночь. Финансовый отчёт за рабочий день:';
+   
+   const elGross = document.getElementById('dayend-gross');
+-  if (elGross) elGross.textContent = '+' + gross + ' ₽';
++  if (elGross) elGross.textContent = (gross >= 0 ? '+' : '') + gross + ' ₽';
+   
+   // 🏢 «Оплата ЖКХ» — выделенный блок (аренда + коммуналка), с акцентным состоянием «каникул»
+   const expBanner = document.getElementById('dayend-expense-banner');
+@@ -5839,7 +5889,7 @@
+   // Анти-софтлок (аудит): нулевой баланс + забитый мёртвым грузом склад = районный аварийный вывоз
+   try {
+     const _deadList = (gameState.shelfParcels || []).filter(p => p.status === 'surplus' || p.status === 'broken');
+-    if (gameState.money < 60 && _deadList.length > 0 && warehouseFree() === 0) {
++    if (_firstReport && gameState.money < 60 && _deadList.length > 0 && warehouseFree() === 0) {
+       gameState.shelfParcels = (gameState.shelfParcels || []).filter(p => p.status !== 'surplus' && p.status !== 'broken');
+       gameState.shelfCells = null;
+       showToast('🏛 Аварийный вывоз: район бесплатно забрал мёртвый груз');

@@ -1,0 +1,56 @@
+import { chromium } from 'playwright';
+import { PROFILES, initScript, playAcceptance, save, compactEvents } from './lib.mjs';
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const browser = await chromium.launch();
+const res = {};
+{ // (a) «?» посреди приёмки; (c) ошибка rewarded
+  const ctx = await browser.newContext(PROFILES.pc720);
+  await ctx.addInitScript(initScript);
+  const p = await ctx.newPage();
+  await p.goto('http://localhost:8802/?adMs=300');
+  await p.waitForFunction(() => window.__ygMock && __ygMock.events.some((e) => e.name === 'LoadingAPI.ready'));
+  await sleep(500);
+  await p.click('#tutorial-btn'); await sleep(500);
+  res.hudVisibleInAcceptance = await p.evaluate(() => ({ sound: getComputedStyle(document.getElementById('btn-sound-toggle')).display !== 'none' && document.getElementById('btn-sound-toggle').offsetParent !== null, help: document.getElementById('btn-help').offsetParent !== null }));
+  await playAcceptance(p, { input: 'eval' });
+  await p.evaluate(() => document.getElementById('btn-summary-continue').click()); await sleep(900);
+  await p.evaluate(() => { if (document.getElementById('tutorial-overlay').classList.contains('show')) closeGuide(); });
+  await sleep(300);
+  const lines0 = await p.evaluate(() => document.querySelectorAll('#scene-text .scene-line').length);
+  await p.click('#btn-help'); await sleep(3000);
+  const during = await p.evaluate(() => ({ overlay: document.getElementById('tutorial-overlay').classList.contains('show'), gameplayActive: YG.gameplayActive, sceneLines: document.querySelectorAll('#scene-text .scene-line').length }));
+  await p.click('#tutorial-btn'); await sleep(300);
+  res.helpDuringScene = { linesBefore: lines0, during, journal: compactEvents(await p.evaluate(() => __ygMock.events)) };
+  await p.evaluate(() => { acceptance = null; });
+  await p.evaluate(() => { showDayEnd({ keepDaily: true }); openShopScreen(); if (document.getElementById('tutorial-overlay').classList.contains('show')) closeGuide(); switchShopTab('daily'); });
+  await sleep(300);
+  await p.evaluate(() => { YG.ysdk.adv.showRewardedVideo = ({ callbacks }) => setTimeout(() => callbacks.onError && callbacks.onError(new Error('no fill')), 50); });
+  const before = await p.evaluate(() => JSON.stringify(gameState.daily));
+  await p.click('.shop-ad-btn'); await sleep(250);
+  res.rewardedError = { toast: await p.evaluate(() => document.getElementById('toast').classList.contains('show') ? document.getElementById('toast').textContent : '(нет сообщения)'), dailyBefore: before, dailyAfter: await p.evaluate(() => JSON.stringify(gameState.daily)), adOpen: await p.evaluate(() => YG.adOpen) };
+  await ctx.close();
+}
+{ // (b) перезапуск в фазе отчёта и сразу «Начать день» — когда просится полноэкранная
+  const ctx = await browser.newContext(PROFILES.pc720);
+  await ctx.addInitScript(initScript);
+  const p = await ctx.newPage();
+  await p.goto('http://localhost:8802/?adMs=300');
+  await p.waitForFunction(() => window.__ygMock && __ygMock.events.some((e) => e.name === 'LoadingAPI.ready'));
+  await sleep(400);
+  await p.evaluate(() => { closeGuide(); });
+  await playAcceptance(p, { input: 'eval' });
+  await p.evaluate(() => { gameState.day++; showDayEnd(); });
+  await sleep(300);
+  await p.goto('about:blank');
+  await p.goto('http://localhost:8802/?adMs=300');
+  await p.waitForFunction(() => window.__ygMock && __ygMock.events.some((e) => e.name === 'LoadingAPI.ready'));
+  await sleep(1200);
+  await p.evaluate(() => { if (document.getElementById('tutorial-overlay').classList.contains('show')) closeGuide(); });
+  await p.click('#screen-dayend .dayend-next-btn');
+  await sleep(600);
+  res.adRightAfterRestore = compactEvents(await p.evaluate(() => __ygMock.events));
+  await ctx.close();
+}
+save('mini.json', res);
+console.log(JSON.stringify(res, null, 1));
+await browser.close();
