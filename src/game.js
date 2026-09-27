@@ -4324,7 +4324,7 @@ const BOMZH_EVENT = {
       act: 'kind',
       deltaRating: 0.05,
       stealChance: 0.5,
-      you: '«Проходите, Федор, грейся. Хотите чаю? Вон конфетки берите, не стесняйтесь.»',
+      you: '«Проходите, Федор, грейтесь. Хотите чаю? Вон конфетки берите, не стесняйтесь.»',
       vOk: '«Ой, спасибо, добрый человек... Давно ко мне так по-человечески...»',
       narrOk: 'Федор сел у батареи, греет руки. Глаза оттаяли.'
     },
@@ -4966,6 +4966,7 @@ function onDeadloadClick(p) {
       try { audio.tap(); } catch(e) {}
       YG.rewarded(() => {
         removeDeadloadByRef(p);
+        YG.forgetParcel(p);
         if (fb && fb.contains(adBtn)) {
           adBtn.remove();
           fb.textContent = 'Тапни по коробке и отсканируй её ШК';
@@ -4974,7 +4975,7 @@ function onDeadloadClick(p) {
         showToast('🚚 ' + typeName + ' передан на возврат — склад чище!');
         updateHUD();
         showWarehouse(); // перерисовать полки
-        YG.save({ phase: 'customers' });
+        YG.save(); // посреди визита: сохранится снимок до визита, уже без этой коробки
       });
     };
     fb.appendChild(adBtn);

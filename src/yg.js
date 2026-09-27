@@ -101,6 +101,7 @@
       if (typeof acceptance !== 'undefined' && acceptance && acceptance.running && !acceptance._paused) {
         acceptance._paused = true;
         acceptance._pausedAt = performance.now();
+        acceptance._hidePaused = true;
       }
       // M-5: пауза авторазворота текста сцены — уход из вкладки не должен «съедать» реплики
       if (typeof sceneQueue !== 'undefined' && sceneQueue && sceneQueue.length && sceneIdx < sceneQueue.length && sceneTimer) {
@@ -113,9 +114,10 @@
     YG.hidden = false;
     resumeAllAudio();
     try {
-      if (typeof acceptance !== 'undefined' && acceptance && acceptance.running && acceptance._paused) {
+      if (typeof acceptance !== 'undefined' && acceptance && acceptance.running && acceptance._paused && acceptance._hidePaused) {
         acceptance.startedAt += performance.now() - acceptance._pausedAt;
         acceptance._paused = false;
+        acceptance._hidePaused = false;
       }
       if (YG._sceneResume) {
         YG._sceneResume = false;
@@ -204,12 +206,44 @@
     };
   }
 
+  // Посреди приёмки или визита состояние изменено наполовину: коробки ещё не на
+  // складе, должник уже вынут из очереди, заказ выдан, а счётчик визитов не сдвинут.
+  // Такой сейв после перезапуска пропускал приёмку и терял должников, поэтому в эти
+  // моменты пишем последний согласованный снимок (YG._checkpoint).
+  function isMidStep() {
+    try { if (acceptance && acceptance.running) return true; } catch (e) {}
+    if (isMenuPhase()) return false;
+    const on = (id) => { const el = document.getElementById(id); return !!(el && el.classList.contains('active')); };
+    if (on('screen-scene') && gameState && gameState.courierVisitedToday) return false;
+    return on('screen-scene') || on('screen-warehouse') || on('screen-result');
+  }
+  // Явная фаза — вызывающий сохраняет на границе шагов; без фазы решаем сами.
+  function snapshot(phase) {
+    if (!phase && isMidStep()) {
+      if (YG._checkpoint) YG._checkpoint.t = Date.now();
+      return YG._checkpoint;
+    }
+    // глубокая копия: collectSave отдаёт ссылки на живые массивы игры (очередь долгов и т.п.)
+    const d = JSON.parse(JSON.stringify(collectSave(phase || currentPhase())));
+    YG._checkpoint = d;
+    return d;
+  }
+  YG._checkpoint = null;
+
   YG.save = function (opts) {
     if (!YG.booted) return; // сейв ещё не загружен — не перезаписываем прогресс
     let data;
-    try { data = collectSave(opts && opts.phase); } catch (e) { return; }
+    try { data = snapshot(opts && opts.phase); } catch (e) { return; }
+    if (!data) return;
     try { localStorage.setItem(SAVE_KEY, JSON.stringify(data)); } catch (e) {}
     scheduleCloudSave(data, false);
+  };
+  // Мёртвый груз убран за рекламу посреди визита — убираем его и из снимка
+  YG.forgetParcel = function (p) {
+    const c = YG._checkpoint;
+    if (!c || !c.shelfParcels || !p) return;
+    const i = c.shelfParcels.findIndex(x => x.code === p.code && (x.status || null) === (p.status || null));
+    if (i !== -1) c.shelfParcels.splice(i, 1);
   };
 
   function scheduleCloudSave(data, immediate) {
@@ -228,7 +262,7 @@
       YG._cloudSaveTimer = setTimeout(() => {
         YG._cloudSaveTimer = null;
         YG._lastCloudSaveAt = Date.now();
-        try { if (YG.player) YG.player.setData({ [CLOUD_KEY]: collectSave(currentPhase()) }, false).catch(() => {}); } catch (e) {}
+        try { const d = snapshot(); if (YG.player && d) YG.player.setData({ [CLOUD_KEY]: d }, false).catch(() => {}); } catch (e) {}
       }, CLOUD_MIN_INTERVAL_MS - wait);
     }
   }
@@ -425,6 +459,7 @@
     loadingReady();
     try {
       if (save) {
+        YG._checkpoint = JSON.parse(JSON.stringify(save)); // копия до applySave: игра меняет массивы сейва
         applySave(save);
         updateHUD();
         showToast('☁️ Прогресс восстановлен');
@@ -454,7 +489,9 @@
   window.addEventListener('pagehide', () => {
     if (!YG.booted) return;
     try {
-      const data = collectSave(currentPhase());
+      const data = snapshot();
+      if (!data) return;
+      try { localStorage.setItem(SAVE_KEY, JSON.stringify(data)); } catch (e) {}
       if (YG.player) YG.player.setData({ [CLOUD_KEY]: data }, true).catch(() => {});
     } catch (e) {}
   });
